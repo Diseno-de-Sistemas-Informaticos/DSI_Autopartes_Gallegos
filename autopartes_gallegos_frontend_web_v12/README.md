@@ -12,8 +12,8 @@
 2. Abre la carpeta `autopartes_gallegos_frontend_web` en Visual Studio Code.
 3. Abre `index.html` en el navegador. Recomendado: instalar la extensión **Live Server** en VS Code.
 4. En VS Code, haz clic derecho en `index.html` y selecciona **Open with Live Server**.
-
-También puedes abrir `index.html` directamente con Chrome u Opera, aunque Live Server facilita el desarrollo.
+    También puedes abrir `index.html` directamente con Chrome u Opera, aunque Live Server facilita el desarrollo.
+5. Ejecutar python -m pip install -r requirements.txt para instalar los modulos de python
 
 ## Estado actual
 - Navegación lateral para los módulos identificados.
