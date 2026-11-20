@@ -1,0 +1,426 @@
+
+IF DB_ID('Autopartes_Gallegos') IS NULL
+BEGIN
+    CREATE DATABASE Autopartes_Gallegos;
+END;
+GO
+
+USE Autopartes_Gallegos;
+GO
+
+CREATE TABLE Rol (
+    id_rol INT NOT NULL,
+    nombre VARCHAR(100),
+    descripcion VARCHAR(100),
+
+    CONSTRAINT PK_Rol PRIMARY KEY (id_rol)
+);
+GO
+
+CREATE TABLE Usuario (
+    id_usuario INT NOT NULL,
+    id_rol INT,
+    nombre VARCHAR(100),
+    correo VARCHAR(100),
+    [password] VARCHAR(100),
+
+    CONSTRAINT PK_Usuario PRIMARY KEY (id_usuario),
+
+    CONSTRAINT FK_Usuario_Rol
+    FOREIGN KEY (id_rol)
+    REFERENCES Rol(id_rol)
+);
+GO
+
+CREATE TABLE Proveedor (
+    id_proveedor INT NOT NULL,
+    nombre VARCHAR(100),
+    telefono VARCHAR(100),
+    correo VARCHAR(100),
+    sitio_web VARCHAR(100),
+
+    CONSTRAINT PK_Proveedor PRIMARY KEY (id_proveedor)
+);
+GO
+
+CREATE TABLE Producto (
+    id_producto INT NOT NULL,
+    codigo_interno VARCHAR(100),
+    codigo_barras CHAR(50),
+    codigo_fabricante VARCHAR(100),
+    nombre VARCHAR(100),
+    descripcion VARCHAR(100),
+    marca VARCHAR(100),
+    categoria VARCHAR(100),
+    compatibilidad VARCHAR(100),
+    equivalencias VARCHAR(100),
+    imagenes VARBINARY(MAX),
+    costo FLOAT,
+    precio_venta FLOAT,
+    stock_actual INT,
+    stock_minimo INT,
+
+    CONSTRAINT PK_Producto PRIMARY KEY (id_producto)
+);
+GO
+
+CREATE TABLE Compra (
+    id_compra INT NOT NULL,
+    id_proveedor INT,
+    usuario_id INT,
+    fecha DATE,
+    total FLOAT,
+
+    CONSTRAINT PK_Compra PRIMARY KEY (id_compra),
+
+    CONSTRAINT FK_Compra_Proveedor
+    FOREIGN KEY (id_proveedor)
+    REFERENCES Proveedor(id_proveedor),
+
+    CONSTRAINT FK_Compra_Usuario
+    FOREIGN KEY (usuario_id)
+    REFERENCES Usuario(id_usuario)
+);
+GO
+
+CREATE TABLE Detalle_compra (
+    id_detalle_compra INT NOT NULL,
+    id_compra INT,
+    id_producto INT,
+    cantidad INT,
+    costo_unitario FLOAT,
+
+    CONSTRAINT PK_Detalle_compra
+    PRIMARY KEY (id_detalle_compra),
+
+    CONSTRAINT FK_Detalle_compra_Compra
+    FOREIGN KEY (id_compra)
+    REFERENCES Compra(id_compra),
+
+    CONSTRAINT FK_Detalle_compra_Producto
+    FOREIGN KEY (id_producto)
+    REFERENCES Producto(id_producto)
+);
+GO
+
+CREATE TABLE Venta (
+    id_venta INT NOT NULL,
+    id_usuario INT,
+    folio VARCHAR(100),
+    fecha DATE,
+    metodo_pago VARCHAR(100),
+    subtotal FLOAT,
+    total FLOAT,
+
+    CONSTRAINT PK_Venta PRIMARY KEY (id_venta),
+
+    CONSTRAINT FK_Venta_Usuario
+    FOREIGN KEY (id_usuario)
+    REFERENCES Usuario(id_usuario)
+);
+GO
+
+CREATE TABLE Detalle_venta (
+    id_detalle_venta INT NOT NULL,
+    id_venta INT,
+    id_producto INT,
+    cantidad INT,
+    precio_unitario FLOAT,
+    importe FLOAT,
+
+    CONSTRAINT PK_Detalle_venta
+    PRIMARY KEY (id_detalle_venta),
+
+    CONSTRAINT FK_Detalle_venta_Venta
+    FOREIGN KEY (id_venta)
+    REFERENCES Venta(id_venta),
+
+    CONSTRAINT FK_Detalle_venta_Producto
+    FOREIGN KEY (id_producto)
+    REFERENCES Producto(id_producto)
+);
+GO
+
+CREATE TABLE Movimiento_inventario (
+    id_movimiento INT NOT NULL,
+    id_producto INT,
+    id_usuario INT,
+    tipo_movimiento VARCHAR(100),
+    cantidad INT,
+    fecha DATE,
+    motivo VARCHAR(100),
+    referencia VARCHAR(100),
+
+    CONSTRAINT PK_Movimiento_inventario
+    PRIMARY KEY (id_movimiento),
+
+    CONSTRAINT FK_Movimiento_inventario_Producto
+    FOREIGN KEY (id_producto)
+    REFERENCES Producto(id_producto),
+
+    CONSTRAINT FK_Movimiento_inventario_Usuario
+    FOREIGN KEY (id_usuario)
+    REFERENCES Usuario(id_usuario)
+);
+GO
+
+CREATE TABLE Producto_externo (
+    id_producto_externo INT NOT NULL,
+    id_producto INT,
+    fuente_nombre VARCHAR(100),
+    url_producto VARCHAR(100),
+    codigo_externo VARCHAR(100),
+    nombre_externo VARCHAR(100),
+    marca_externa VARCHAR(100),
+
+    CONSTRAINT PK_Producto_externo
+    PRIMARY KEY (id_producto_externo),
+
+    CONSTRAINT FK_Producto_externo_Producto
+    FOREIGN KEY (id_producto)
+    REFERENCES Producto(id_producto)
+);
+GO
+
+CREATE TABLE Historial_precio (
+    id_historial INT NOT NULL,
+    id_producto_externo INT,
+    precio FLOAT,
+    fecha_captura DATE,
+    codigo_externo VARCHAR(100),
+
+    CONSTRAINT PK_Historial_precio
+    PRIMARY KEY (id_historial),
+
+    CONSTRAINT FK_Historial_precio_Producto_externo
+    FOREIGN KEY (id_producto_externo)
+    REFERENCES Producto_externo(id_producto_externo)
+);
+GO
+
+-- VERIFICAR LAS TABLAS CREADAS
+SELECT TABLE_NAME AS Nombre_Tabla
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_TYPE = 'BASE TABLE'
+ORDER BY TABLE_NAME;
+GO
+
+-- VERIFICAR LAS CLAVES FORANEAS
+SELECT
+    fk.name AS Nombre_Clave_Foranea,
+    OBJECT_NAME(fk.parent_object_id) AS Tabla_Origen,
+    OBJECT_NAME(fk.referenced_object_id) AS Tabla_Referencia
+FROM sys.foreign_keys fk
+ORDER BY Tabla_Origen;
+GO
+
+
+USE Autopartes_Gallegos;
+GO
+
+/* ============================================
+   1. TABLA: Ejecucion_scraping
+   ============================================ */
+
+IF OBJECT_ID('Ejecucion_scraping', 'U') IS NULL
+BEGIN
+    CREATE TABLE Ejecucion_scraping (
+        id_ejecucion INT IDENTITY(1,1) NOT NULL,
+        id_usuario INT NULL,
+        termino_busqueda VARCHAR(255) NOT NULL,
+        tipo_busqueda VARCHAR(30) NOT NULL,
+        fecha_inicio DATETIME2 NOT NULL
+            CONSTRAINT DF_EjecucionScraping_Inicio
+            DEFAULT SYSDATETIME(),
+        fecha_fin DATETIME2 NULL,
+        estado VARCHAR(30) NOT NULL
+            CONSTRAINT DF_EjecucionScraping_Estado
+            DEFAULT 'En proceso',
+        paginas_consultadas INT NOT NULL DEFAULT 0,
+        total_resultados INT NOT NULL DEFAULT 0,
+        mensaje_error NVARCHAR(MAX) NULL,
+
+        CONSTRAINT PK_Ejecucion_scraping
+            PRIMARY KEY (id_ejecucion),
+
+        CONSTRAINT FK_EjecucionScraping_Usuario
+            FOREIGN KEY (id_usuario)
+            REFERENCES Usuario(id_usuario),
+
+        CONSTRAINT CK_EjecucionScraping_Tipo
+            CHECK (tipo_busqueda IN ('Codigo', 'Descripcion')),
+
+        CONSTRAINT CK_EjecucionScraping_Estado
+            CHECK (estado IN (
+                'En proceso',
+                'Completada',
+                'Error',
+                'Incompleta'
+            ))
+    );
+END;
+GO
+
+
+/* ============================================
+   2. AMPLIAR: Producto_externo
+   ============================================ */
+
+IF COL_LENGTH('Producto_externo', 'id_proveedor') IS NULL
+BEGIN
+    ALTER TABLE Producto_externo
+    ADD id_proveedor INT NULL;
+END;
+GO
+
+IF COL_LENGTH('Producto_externo', 'sucursal_externa') IS NULL
+BEGIN
+    ALTER TABLE Producto_externo
+    ADD sucursal_externa VARCHAR(150) NULL;
+END;
+GO
+
+IF COL_LENGTH('Producto_externo', 'descripcion_externa') IS NULL
+BEGIN
+    ALTER TABLE Producto_externo
+    ADD descripcion_externa VARCHAR(500) NULL;
+END;
+GO
+
+-- Ampliar el tamaño de la URL.
+ALTER TABLE Producto_externo
+ALTER COLUMN url_producto VARCHAR(2048) NULL;
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = 'FK_ProductoExterno_Proveedor'
+)
+BEGIN
+    ALTER TABLE Producto_externo
+    ADD CONSTRAINT FK_ProductoExterno_Proveedor
+    FOREIGN KEY (id_proveedor)
+    REFERENCES Proveedor(id_proveedor);
+END;
+GO
+
+
+/* ============================================
+   3. AMPLIAR: Historial_precio
+   ============================================ */
+
+-- Precio con precisión monetaria.
+ALTER TABLE Historial_precio
+ALTER COLUMN precio DECIMAL(12,2) NULL;
+GO
+
+-- Registrar fecha y hora, no solamente el día.
+ALTER TABLE Historial_precio
+ALTER COLUMN fecha_captura DATETIME2 NULL;
+GO
+
+IF COL_LENGTH('Historial_precio', 'id_ejecucion') IS NULL
+BEGIN
+    ALTER TABLE Historial_precio
+    ADD id_ejecucion INT NULL;
+END;
+GO
+
+IF COL_LENGTH('Historial_precio', 'moneda') IS NULL
+BEGIN
+    ALTER TABLE Historial_precio
+    ADD moneda CHAR(3) NOT NULL
+        CONSTRAINT DF_HistorialPrecio_Moneda
+        DEFAULT 'MXN';
+END;
+GO
+
+IF COL_LENGTH('Historial_precio', 'disponible') IS NULL
+BEGIN
+    ALTER TABLE Historial_precio
+    ADD disponible BIT NULL;
+END;
+GO
+
+IF COL_LENGTH('Historial_precio', 'existencia_reportada') IS NULL
+BEGIN
+    ALTER TABLE Historial_precio
+    ADD existencia_reportada INT NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = 'FK_HistorialPrecio_Ejecucion'
+)
+BEGIN
+    ALTER TABLE Historial_precio
+    ADD CONSTRAINT FK_HistorialPrecio_Ejecucion
+    FOREIGN KEY (id_ejecucion)
+    REFERENCES Ejecucion_scraping(id_ejecucion);
+END;
+GO
+
+
+/* ============================================
+   4. ÍNDICES PARA CONSULTAS
+   ============================================ */
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = 'IX_ProductoExterno_Proveedor_Codigo'
+      AND object_id = OBJECT_ID('Producto_externo')
+)
+BEGIN
+    CREATE INDEX IX_ProductoExterno_Proveedor_Codigo
+    ON Producto_externo (
+        id_proveedor,
+        codigo_externo
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = 'IX_HistorialPrecio_Producto_Fecha'
+      AND object_id = OBJECT_ID('Historial_precio')
+)
+BEGIN
+    CREATE INDEX IX_HistorialPrecio_Producto_Fecha
+    ON Historial_precio (
+        id_producto_externo,
+        fecha_captura DESC
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = 'IX_EjecucionScraping_Fecha'
+      AND object_id = OBJECT_ID('Ejecucion_scraping')
+)
+BEGIN
+    CREATE INDEX IX_EjecucionScraping_Fecha
+    ON Ejecucion_scraping (fecha_inicio DESC);
+END;
+GO
+
+
+/* ============================================
+   5. VERIFICAR ESTRUCTURA
+   ============================================ */
+
+SELECT
+    TABLE_NAME AS Tabla,
+    COLUMN_NAME AS Columna,
+    DATA_TYPE AS Tipo_dato
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME IN (
+    'Producto_externo',
+    'Historial_precio',
+    'Ejecucion_scraping'
+)
+ORDER BY TABLE_NAME, ORDINAL_POSITION;
+GO
