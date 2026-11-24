@@ -216,8 +216,8 @@ def get_results(
           ON pe.id_producto_externo = c.id_producto_externo
         LEFT JOIN Proveedor pr
           ON pr.id_proveedor = pe.id_proveedor
-        AND c.rn = 1
-        {where}
+        WHERE c.rn = 1
+        {(" AND " + " AND ".join(conditions)) if conditions else ""}
         ORDER BY c.fecha_captura DESC
         OFFSET :offset ROWS FETCH NEXT :page_size ROWS ONLY
         """

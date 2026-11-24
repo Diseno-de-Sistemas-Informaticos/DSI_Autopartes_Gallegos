@@ -700,10 +700,213 @@ function exportCurrentReportCSV(){
  const csv=[headers,...rows].map(row=>row.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\r\n");const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url);
 }
 
-function renderPlaceholder(key){
- const desc={movements:"Registro y consulta de entradas, salidas y ajustes de inventario.",providers:"Administración de proveedores y sus datos de contacto.",purchases:"Registro de compras y recepción de mercancía.",reports:"Indicadores, filtros y exportación de información.",scraping:"Configuración de fuentes y ejecución de extracción de datos públicos autorizados.",market:"Comparación de precios externos e identificación de oportunidades comerciales.",users:"Administración de usuarios, roles y permisos de acceso."};
- const icon={movements:"bi-arrow-left-right",providers:"bi-truck",purchases:"bi-bag-plus",reports:"bi-bar-chart",scraping:"bi-globe2",market:"bi-graph-up-arrow",users:"bi-people"};
- content.innerHTML=heading(pageNames[key],desc[key])+`<div class="card-panel"><div class="empty-state"><i class="bi ${icon[key]}"></i><strong>Módulo preparado para desarrollo</strong><span>La estructura visual está contemplada. La funcionalidad se implementará por iteraciones y se conectará con el backend.</span></div></div>`;
+const SCRAPING_API_BASE = "http://127.0.0.1:8000";
+let scrapingBusy=false;
+
+async function scrapingRequest(path, options={}){
+ const response=await fetch(`${SCRAPING_API_BASE}${path}`,{
+  headers:{"Accept":"application/json",...(options.body?{"Content-Type":"application/json"}:{}),...(options.headers||{})},
+  ...options
+ });
+ let data=null;
+ try{data=await response.json();}catch(error){throw new Error("El servidor devolvió una respuesta inválida.");}
+ if(!response.ok){throw new Error(data.detail||data.message||`Error HTTP ${response.status}`);}
+ return data;
+}
+
+function formatScrapingDate(value){
+ if(!value)return "Sin fecha";
+ const date=new Date(value);
+ return Number.isNaN(date.getTime())?String(value):date.toLocaleString("es-MX");
+}
+
+function scrapingStatusBadge(status){
+ const normalized=String(status||"").toLowerCase();
+ if(normalized==="completada")return statusBadge("Disponible");
+ if(normalized==="error")return statusBadge("Agotado");
+ if(normalized==="en proceso")return statusBadge("Stock bajo");
+ return statusBadge(status||"Sin estado");
+}
+
+async function loadScrapingExecutions(){
+ try{
+  const data=await scrapingRequest("/api/scraping/executions?page=1&page_size=10");
+  const executionRows=(data.items||[]).map(execution=>`
+   <tr>
+    <td><strong>#${execution.id}</strong></td>
+    <td>${escapeHTML(execution.search_type||"—")}</td>
+    <td>${formatScrapingDate(execution.started_at)}</td>
+    <td>${scrapingStatusBadge(execution.status)}</td>
+    <td>${execution.pages||0}</td>
+    <td>${execution.articles||0}</td>
+    <td>${execution.new_products||0}</td>
+    <td>${execution.price_changes||0}</td>
+    <td>${execution.errors||0}</td>
+   </tr>`).join("");
+  document.getElementById("scraping-executions-body").innerHTML=executionRows||`<tr><td colspan="9" class="text-muted">No hay ejecuciones registradas.</td></tr>`;
+ }catch(error){
+  document.getElementById("scraping-executions-body").innerHTML=`<tr><td colspan="9" class="text-danger">${escapeHTML(error.message)}</td></tr>`;
+ }
+}
+
+async function loadScrapingResults(){
+ try{
+  const data=await scrapingRequest("/api/scraping/results?page=1&page_size=50");
+  const rows=(data.items||[]).map(item=>{
+   const lowest=false;
+   return `<tr>
+    <td>${escapeHTML(item.name||"Sin nombre")}</td>
+    <td><strong>${escapeHTML(item.code||"—")}</strong></td>
+    <td>${escapeHTML(item.brand||"—")}</td>
+    <td>${escapeHTML(item.provider||"—")}</td>
+    <td>${escapeHTML(item.branch||"—")}</td>
+    <td>${item.price!=null?money(Number(item.price)): "Sin precio"}</td>
+    <td>${item.availability===true?"Disponible":item.availability===false?"No disponible":"Sin confirmar"}</td>
+    <td>${formatScrapingDate(item.captured_at)}</td>
+    <td><button class="btn btn-light btn-sm" type="button" data-scraping-history="${item.id_external_product}"><i class="bi bi-clock-history"></i></button></td>
+   </tr>`;
+  }).join("");
+  document.getElementById("scraping-results-body").innerHTML=rows||`<tr><td colspan="9" class="text-muted">No hay resultados almacenados.</td></tr>`;
+  document.getElementById("scraping-total-external").textContent=data.total||0;
+
+  const executions=await scrapingRequest("/api/scraping/executions?page=1&page_size=1");
+  const last=(executions.items||[])[0];
+  document.getElementById("scraping-last-execution").textContent=last?formatScrapingDate(last.started_at):"Sin ejecución";
+  document.getElementById("scraping-last-status").textContent=last?.status||"Sin estado";
+  document.getElementById("scraping-daily-pages").textContent=last?.pages||0;
+  document.getElementById("scraping-daily-articles").textContent=last?.articles||0;
+  document.getElementById("scraping-daily-new").textContent=last?.new_products||0;
+  document.getElementById("scraping-daily-prices").textContent=last?.price_changes||0;
+  document.getElementById("scraping-daily-errors").textContent=last?.errors||0;
+ }catch(error){
+  document.getElementById("scraping-results-body").innerHTML=`<tr><td colspan="9" class="text-danger">${escapeHTML(error.message)}</td></tr>`;
+  document.getElementById("scraping-api-error").textContent=error.message;
+  document.getElementById("scraping-api-error").classList.remove("d-none");
+ }
+}
+
+async function runScrapingSearch(){
+ if(scrapingBusy)return;
+ const searchType=document.getElementById("scraping-type").value;
+ const code=document.getElementById("scraping-code").value.trim();
+ const description=document.getElementById("scraping-description").value.trim();
+ const term=searchType==="Codigo"?code:description;
+ if(!term){alert("Ingresa el número de parte o la descripción según el tipo de búsqueda.");return;}
+
+ scrapingBusy=true;
+ const button=document.getElementById("scraping-search-button");
+ button.disabled=true;
+ button.innerHTML=`<span class="spinner-border spinner-border-sm me-1"></span> Consultando...`;
+ document.getElementById("scraping-api-error").classList.add("d-none");
+
+ try{
+  const data=await scrapingRequest("/api/scraping/search",{
+   method:"POST",
+   body:JSON.stringify({
+    code:searchType==="Codigo"?term:null,
+    description:searchType==="Descripcion"?term:null,
+    search_type:searchType
+   })
+  });
+  await loadScrapingResults();
+  await loadScrapingExecutions();
+  document.getElementById("scraping-message").innerHTML=`<div class="alert alert-success py-2 small">Consulta completada: ${data.comparison?.new_products||0} productos nuevos y ${data.comparison?.price_changes||0} cambios de precio.</div>`;
+ }catch(error){
+  document.getElementById("scraping-message").innerHTML=`<div class="alert alert-danger py-2 small">${escapeHTML(error.message)}</div>`;
+ }finally{
+  scrapingBusy=false;
+  button.disabled=false;
+  button.innerHTML=`<i class="bi bi-search me-1"></i> Consultar proveedores`;
+ }
+}
+
+async function runDailyScraping(){
+ if(scrapingBusy)return;
+ scrapingBusy=true;
+ const button=document.getElementById("scraping-daily-button");
+ button.disabled=true;
+ button.innerHTML=`<span class="spinner-border spinner-border-sm me-1"></span> Ejecutando...`;
+ try{
+  const data=await scrapingRequest("/api/scraping/daily/run",{method:"POST",body:"{}"});
+  await loadScrapingResults();
+  await loadScrapingExecutions();
+  document.getElementById("scraping-message").innerHTML=`<div class="alert alert-success py-2 small">Extracción general completada. Ejecución #${data.execution_id}.</div>`;
+ }catch(error){
+  document.getElementById("scraping-message").innerHTML=`<div class="alert alert-danger py-2 small">${escapeHTML(error.message)}</div>`;
+ }finally{
+  scrapingBusy=false;
+  button.disabled=false;
+  button.innerHTML=`<i class="bi bi-play-circle me-1"></i> Ejecutar extracción general`;
+ }
+}
+
+async function showScrapingHistory(id){
+ try{
+  const data=await scrapingRequest(`/api/scraping/price-history/${id}`);
+  const rows=(data.items||[]).map(item=>`<tr><td>${formatScrapingDate(item.captured_at)}</td><td>${item.price!=null?money(Number(item.price)):"Sin precio"}</td><td>${item.available===true?"Disponible":item.available===false?"No disponible":"Sin confirmar"}</td><td>${item.stock!=null?item.stock:"—"}</td></tr>`).join("")||`<tr><td colspan="4" class="text-muted">No existe historial.</td></tr>`;
+  let modal=document.getElementById("scraping-history-modal");
+  if(!modal){
+   modal=document.createElement("div");
+   modal.id="scraping-history-modal";
+   modal.className="modal fade";
+   modal.innerHTML=`<div class="modal-dialog modal-dialog-centered modal-lg"><div class="modal-content"><div class="modal-header"><div><h5 class="modal-title">Historial de precios</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body" id="scraping-history-body"></div><div class="modal-footer"><button class="btn btn-light btn-sm" data-bs-dismiss="modal">Cerrar</button></div></div></div>`;
+   document.body.appendChild(modal);
+  }
+  document.getElementById("scraping-history-body").innerHTML=table(["Fecha","Precio","Disponibilidad","Existencia"],rows);
+  bootstrap.Modal.getOrCreateInstance(modal).show();
+ }catch(error){alert(error.message);}
+}
+
+function renderScraping(){
+ const dailyAllowed=currentUser?.role==="Super Admin";
+ content.innerHTML=heading("Web scraping","Consulta SAGAJI, compara precios y revisa las ejecuciones registradas.",
+  `<button class="btn btn-outline-primary btn-sm me-2" id="scraping-refresh-button"><i class="bi bi-arrow-clockwise me-1"></i> Actualizar</button>`+
+  (dailyAllowed?`<button class="btn btn-primary btn-sm" id="scraping-daily-button"><i class="bi bi-play-circle me-1"></i> Ejecutar extracción general</button>`:""))+
+ `<div id="scraping-message"></div>
+  <div class="alert alert-danger py-2 small d-none" id="scraping-api-error"></div>
+  <div class="row g-3 mb-3">
+   <div class="col-12 col-sm-6 col-xl-3">${metric("Productos externos","<span id=\"scraping-total-external\">0</span>","bi-box-seam","Registrados en SQL Server")}</div>
+   <div class="col-12 col-sm-6 col-xl-3">${metric("Última ejecución","<span class=\"fs-6\" id=\"scraping-last-execution\">Sin ejecución</span>","bi-clock-history","Ejecutado recientemente")}</div>
+   <div class="col-12 col-sm-6 col-xl-3">${metric("Estado","<span class=\"fs-6\" id=\"scraping-last-status\">Sin estado</span>","bi-activity","Última extracción")}</div>
+   <div class="col-12 col-sm-6 col-xl-3">${metric("Nuevos / precios","<span id=\"scraping-daily-new\">0</span> / <span id=\"scraping-daily-prices\">0</span>","bi-arrow-repeat","Última extracción")}</div>
+  </div>
+  <div class="row g-3 mb-3">
+   <div class="col-12 col-xl-7">${panel("Búsqueda manual",`
+    <div class="row g-2 align-items-end">
+     <div class="col-12 col-md-3"><label class="form-label" for="scraping-type">Tipo de búsqueda</label><select class="form-select" id="scraping-type"><option value="Codigo">Número de parte</option><option value="Descripcion">Descripción</option></select></div>
+     <div class="col-12 col-md-3"><label class="form-label" for="scraping-code">Número de parte</label><input class="form-control" id="scraping-code" maxlength="100" placeholder="Ej. FGI32"></div>
+     <div class="col-12 col-md-4"><label class="form-label" for="scraping-description">Descripción</label><input class="form-control" id="scraping-description" maxlength="255" placeholder="Ej. filtro de combustible"></div>
+     <div class="col-12 col-md-2"><button class="btn btn-primary btn-sm w-100" id="scraping-search-button"><i class="bi bi-search me-1"></i> Consultar</button></div>
+    </div>`)}</div>
+   <div class="col-12 col-xl-5">${panel("Estado de extracción diaria",`
+    <div class="row g-2">
+     <div class="col-6 col-md-4"><span class="text-muted small d-block">Páginas</span><strong id="scraping-daily-pages">0</strong></div>
+     <div class="col-6 col-md-4"><span class="text-muted small d-block">Artículos</span><strong id="scraping-daily-articles">0</strong></div>
+     <div class="col-6 col-md-4"><span class="text-muted small d-block">Errores</span><strong id="scraping-daily-errors">0</strong></div>
+     <div class="col-12"><span class="text-muted small d-block">Próxima ejecución</span><strong>${escapeHTML(settingsScrapingNextTime())}</strong></div>
+    </div>`)}</div>
+  </div>
+  <div class="card-panel mb-3"><div class="panel-head"><div><h2>Comparación de precios</h2><span class="small text-muted">Solo se muestran resultados almacenados con proveedor y número de parte.</span></div></div><div class="panel-body p-0"><div class="table-responsive"><table class="table align-middle"><thead><tr><th>Producto</th><th>Número de parte</th><th>Marca</th><th>Proveedor</th><th>Sucursal</th><th>Precio</th><th>Disponibilidad</th><th>Actualización</th><th>Historial</th></tr></thead><tbody id="scraping-results-body"><tr><td colspan="9" class="text-muted">Cargando resultados...</td></tr></tbody></table></div></div></div>
+  <div class="card-panel"><div class="panel-head"><h2>Historial de ejecuciones</h2></div><div class="panel-body p-0"><div class="table-responsive"><table class="table align-middle"><thead><tr><th>ID</th><th>Tipo</th><th>Inicio</th><th>Estado</th><th>Páginas</th><th>Artículos</th><th>Nuevos</th><th>Precios modificados</th><th>Errores</th></tr></thead><tbody id="scraping-executions-body"><tr><td colspan="9" class="text-muted">Cargando ejecuciones...</td></tr></tbody></table></div></div></div>`;
+
+ document.getElementById("scraping-search-button").addEventListener("click",runScrapingSearch);
+ document.getElementById("scraping-refresh-button").addEventListener("click",async()=>{await loadScrapingResults();await loadScrapingExecutions();});
+ if(dailyAllowed)document.getElementById("scraping-daily-button").addEventListener("click",runDailyScraping);
+ content.onclick=null;
+ content.querySelectorAll("[data-scraping-history]").forEach(button=>button.addEventListener("click",()=>showScrapingHistory(button.dataset.scrapingHistory)));
+ document.getElementById("scraping-type").addEventListener("change",event=>{
+  const codeEnabled=event.target.value==="Codigo";
+  document.getElementById("scraping-code").disabled=!codeEnabled;
+  document.getElementById("scraping-description").disabled=codeEnabled;
+ });
+ document.getElementById("scraping-code").disabled=false;
+ document.getElementById("scraping-description").disabled=true;
+ loadScrapingResults();
+ loadScrapingExecutions();
+}
+
+function settingsScrapingNextTime(){
+ return "Hoy o mañana según la hora 02:00 · America/Mexico_City";
 }
 function navigate(key){
  if(!pageNames[key]||!currentUser)return;
@@ -711,7 +914,7 @@ function navigate(key){
  currentPage=key;
  document.querySelectorAll("#main-nav .nav-link").forEach(a=>a.classList.toggle("active",a.dataset.page===key));
  document.getElementById("breadcrumb").textContent=pageNames[key];
- ({dashboard:renderDashboard,catalog:renderCatalog,inventory:renderInventory,movements:renderMovements,pos:renderPOS,sales:renderSales,providers:renderProviders,purchases:renderPurchases,reports:renderReports,users:renderUsers}[key]||(()=>renderPlaceholder(key)))();
+ ({dashboard:renderDashboard,catalog:renderCatalog,inventory:renderInventory,movements:renderMovements,pos:renderPOS,sales:renderSales,providers:renderProviders,purchases:renderPurchases,reports:renderReports,scraping:renderScraping,users:renderUsers}[key]||(()=>renderPlaceholder(key)))();
  document.getElementById("sidebar").classList.remove("open");
 }
 document.getElementById("main-nav").addEventListener("click",e=>{const a=e.target.closest("[data-page]");if(!a)return;e.preventDefault();navigate(a.dataset.page);});
