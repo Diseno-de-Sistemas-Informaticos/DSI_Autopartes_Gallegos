@@ -1,5 +1,203 @@
 # Autopartes Gallegos — Frontend web inicial
 
+## Integración backend y Web Scraping
+
+El módulo Web Scraping del panel administrativo está integrado con FastAPI y SQL Server.
+La interfaz no accede directamente a SQL Server ni contiene credenciales de SAGAJI.
+
+### Arquitectura
+
+```text
+index.html + js/app.js
+        |
+        v
+FastAPI /api/scraping
+        |
+        +-- SagajiClient
+        +-- ExtractionService
+        +-- ComparisonService
+        +-- PersistenceService
+        |
+        v
+SQL Server / Autopartes_Gallegos
+```
+
+### Instalación
+
+```powershell
+cd C:\web\DSI_Autopartes_Gallegos\autopartes_gallegos_frontend_web_v12
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Si no existe un entorno virtual:
+
+```powershell
+python -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### Configuración
+
+Copie [.env.example](.env.example) como `.env`. No sobrescriba ni confirme el `.env` existente.
+Configure SQL Server, SAGAJI y las opciones de scraping. `API_SECRET_KEY` debe tener una clave
+generada localmente y no debe exponerse al frontend.
+
+Las variables disponibles son:
+
+- SQL Server: `SQLSERVER_HOST`, `SQLSERVER_PORT`, `SQLSERVER_DATABASE`,
+  `SQLSERVER_USERNAME`, `SQLSERVER_PASSWORD`, `SQLSERVER_DRIVER`.
+- API: `API_HOST`, `API_PORT`, `API_DEBUG`, `API_SECRET_KEY`.
+- SAGAJI: `SAGAJI_USER`, `SAGAJI_PASSWORD`, `SAGAJI_REMEMBER`.
+- Scraping: `SCRAPING_ENABLED`, `SCRAPING_DAILY_ENABLED`,
+  `SCRAPING_DAILY_TIME`, `SCRAPING_TIMEZONE`, `SCRAPING_REQUEST_DELAY`,
+  `SCRAPING_MAX_RETRIES`, `SCRAPING_PAGE_SIZE`.
+
+### Migración SQL
+
+Ejecute la migración existente una sola vez o de forma idempotente:
+
+```powershell
+sqlcmd -S localhost,1433 -d Autopartes_Gallegos -U <usuario> -P <password> -C `
+  -i backend/migrations/001_scraping_schema.sql
+```
+
+La migración conserva datos históricos. Agrega identificadores, contadores,
+relaciones e índices sin recrear tablas comerciales.
+
+### Iniciar FastAPI
+
+Configure `API_SECRET_KEY` en `.env` y ejecute:
+
+```powershell
+$env:PYTHONPATH="$PWD\backend;$PWD"
+.\venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Documentación interactiva:
+
+- Swagger: `http://127.0.0.1:8000/docs`
+- OpenAPI: `http://127.0.0.1:8000/openapi.json`
+
+### Iniciar el frontend
+
+Abra `index.html` con Live Server. La API acepta los orígenes locales
+`127.0.0.1:5500` y `localhost:5500`.
+
+### Iniciar el programador diario
+
+Ejecutar una sola vez:
+
+```powershell
+$env:PYTHONPATH="$PWD\backend;$PWD"
+.\venv\Scripts\python.exe -m app.scheduler.daily_scraping --once
+```
+
+Dejar activo el programador:
+
+```powershell
+$env:PYTHONPATH="$PWD\backend;$PWD"
+.\venv\Scripts\python.exe -m app.scheduler.daily_scraping
+```
+
+La hora predeterminada es `02:00` en `America/Mexico_City`.
+Se recomienda ejecutar el programador como un proceso independiente,
+no dentro de varios trabajadores Uvicorn.
+
+### Probar salud y base de datos
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/health
+```
+
+Respuesta sin revelar credenciales:
+
+```json
+{"status":"ok","api":"ok","database":"ok"}
+```
+
+### Búsqueda manual
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/scraping/search `
+  -ContentType "application/json" `
+  -Body '{"code":"FGI32","description":null,"search_type":"Codigo"}'
+```
+
+Consulta por descripción:
+
+```json
+{"code":null,"description":"filtro de combustible","search_type":"Descripcion"}
+```
+
+### Consultar resultados
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8000/api/scraping/results?page=1&page_size=20"
+```
+
+Filtros disponibles:
+
+- `code`
+- `description`
+- `provider`
+- `min_price`
+- `max_price`
+- `availability`
+- `captured_from`
+- `captured_to`
+- `page`
+- `page_size`
+
+Ejemplo:
+
+```text
+/api/scraping/results?code=FGI32&provider=SAGAJI&min_price=1&max_price=500
+```
+
+### Historial y ejecuciones
+
+```text
+GET /api/scraping/price-history/{id_producto_externo}
+GET /api/scraping/executions?page=1&page_size=20
+GET /api/scraping/executions/{id_ejecucion}
+```
+
+Comparación exacta por código:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/scraping/compare `
+  -ContentType "application/json" `
+  -Body '{"code":"FGI32"}'
+```
+
+### Ejecución diaria manual
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/api/scraping/daily/run
+```
+
+### Ejecución de pruebas
+
+```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests -t .
+.\venv\Scripts\python.exe -m compileall -q backend/app scraper tests
+node --check js/app.js
+```
+
+Las pruebas no requieren el portal real y utilizan datos simulados.
+
+### Limitaciones reales de SAGAJI
+
+- La autenticación real fue comprobada con el adaptador existente.
+- El puerto conocido permite búsqueda por descripción y número de parte.
+- No se confirmó un endpoint de catálogo general documentado por SAGAJI.
+- Por ello, la ejecución diaria usa actualmente la búsqueda amplia disponible.
+- No se inventaron rutas adicionales ni parámetros desconocidos del portal.
+- Los artículos sin coincidencia exacta de código no se presentan como equivalencia confirmada.
+
 ## Tecnologías
 - HTML5
 - CSS3
@@ -12,8 +210,8 @@
 2. Abre la carpeta `autopartes_gallegos_frontend_web` en Visual Studio Code.
 3. Abre `index.html` en el navegador. Recomendado: instalar la extensión **Live Server** en VS Code.
 4. En VS Code, haz clic derecho en `index.html` y selecciona **Open with Live Server**.
-
-También puedes abrir `index.html` directamente con Chrome u Opera, aunque Live Server facilita el desarrollo.
+    También puedes abrir `index.html` directamente con Chrome u Opera, aunque Live Server facilita el desarrollo.
+5. Ejecutar python -m pip install -r requirements.txt para instalar los modulos de python
 
 ## Estado actual
 - Navegación lateral para los módulos identificados.
