@@ -1,5 +1,6 @@
 
 import os
+import time
 import requests
 
 from dotenv import load_dotenv
@@ -13,7 +14,12 @@ class SagajiClient:
     BASE_URL = "https://ecommerce.sagaji.com.mx/ecommerce/MVC"
     HOME_URL = "https://ecommerce.sagaji.com.mx/ecommerce/"
 
-    def __init__(self):
+    def __init__(
+        self,
+        max_retries=None,
+        request_delay=None,
+        timeout=30
+    ):
 
         self.usuario = os.getenv("SAGAJI_USER")
         self.password = os.getenv("SAGAJI_PASSWORD")
@@ -24,6 +30,17 @@ class SagajiClient:
                 "Configura SAGAJI_USER y SAGAJI_PASSWORD en .env"
             )
 
+        self.max_retries = (
+            int(max_retries)
+            if max_retries is not None
+            else int(os.getenv("SCRAPING_MAX_RETRIES", "3"))
+        )
+        self.request_delay = (
+            float(request_delay)
+            if request_delay is not None
+            else float(os.getenv("SCRAPING_REQUEST_DELAY", "1"))
+        )
+        self.timeout = timeout
         self.session = requests.Session()
 
         self.session.headers.update({
@@ -36,11 +53,47 @@ class SagajiClient:
         self.canal = None
         self.login = None
 
+    def _get_with_retries(self, url, params=None, reauth=True):
+        ultimo_error = None
+
+        for intento in range(1, self.max_retries + 1):
+            try:
+                response = self.session.get(
+                    url,
+                    params=params,
+                    timeout=self.timeout
+                )
+
+                if response.status_code == 205 and reauth:
+                    self.autenticado = False
+                    self.iniciar_sesion()
+                    continue
+
+                if response.status_code in {429, 500, 502, 503, 504}:
+                    ultimo_error = RuntimeError(
+                        f"Error temporal HTTP {response.status_code}"
+                    )
+                else:
+                    return response
+
+            except requests.RequestException as error:
+                ultimo_error = error
+
+            if intento < self.max_retries:
+                time.sleep(self.request_delay * intento)
+
+        if ultimo_error:
+            raise RuntimeError(
+                "No fue posible completar la solicitud temporal de SAGAJI."
+            ) from ultimo_error
+
+        raise RuntimeError("No fue posible completar la solicitud a SAGAJI.")
+
     def iniciar_sesion(self):
 
-        self.session.get(
+        self._get_with_retries(
             self.HOME_URL,
-            timeout=30
+            reauth=False
         )
 
         params = {
@@ -50,10 +103,10 @@ class SagajiClient:
             "id": "IniciaSesion"
         }
 
-        response = self.session.get(
+        response = self._get_with_retries(
             self.BASE_URL,
             params=params,
-            timeout=30
+            reauth=False
         )
 
         if response.status_code == 205:
@@ -100,7 +153,8 @@ class SagajiClient:
         self,
         termino,
         pagina=0,
-        cuantos=10
+        cuantos=10,
+        tipo_busqueda="Descripcion"
     ):
 
         if not self.autenticado:
@@ -120,18 +174,18 @@ class SagajiClient:
             "motor": "",
             "cilindro": "",
             "familia": "",
-            "noparte": "",
-            "valor": termino,
+            "noparte": termino if tipo_busqueda == "Codigo" else "",
+            "valor": "" if tipo_busqueda == "Codigo" else termino,
             "categoria": "",
             "lineas": "",
             "familias": "",
             "id": "AutopartesDescripcion"
         }
 
-        response = self.session.get(
+        response = self._get_with_retries(
             self.BASE_URL,
             params=params,
-            timeout=30
+            reauth=True
         )
 
         if response.status_code == 205:
@@ -162,7 +216,8 @@ class SagajiClient:
         self,
         termino,
         cuantos=10,
-        max_paginas=100
+        max_paginas=None,
+        tipo_busqueda="Descripcion"
     ):
         """
         Recupera todas las páginas disponibles para una búsqueda.
@@ -175,7 +230,8 @@ class SagajiClient:
         primera_respuesta = self.buscar_por_descripcion(
             termino=termino,
             pagina=0,
-            cuantos=cuantos
+            cuantos=cuantos,
+            tipo_busqueda=tipo_busqueda
         )
 
         informacion_paginas = primera_respuesta.get("paginas", {})
@@ -197,7 +253,7 @@ class SagajiClient:
         if total_paginas < 1:
             total_paginas = 1
 
-        if total_paginas > max_paginas:
+        if max_paginas is not None and total_paginas > max_paginas:
             raise RuntimeError(
                 f"La consulta requiere {total_paginas} páginas. "
                 f"Se superó el límite de seguridad de {max_paginas}."
@@ -208,20 +264,19 @@ class SagajiClient:
         # Consultamos las páginas restantes.
         for numero_pagina in range(1, total_paginas):
 
-            print(
-                f"Consultando página {numero_pagina + 1} "
-                f"de {total_paginas}..."
-            )
-
             respuesta = self.buscar_por_descripcion(
                 termino=termino,
                 pagina=numero_pagina,
-                cuantos=cuantos
+                cuantos=cuantos,
+                tipo_busqueda=tipo_busqueda
             )
 
             productos_pagina = respuesta.get("productos", [])
 
             todos_los_productos.extend(productos_pagina)
+
+            if self.request_delay > 0:
+                time.sleep(self.request_delay)
 
         # Eliminamos duplicados usando filial y número de parte.
         productos_unicos = []
