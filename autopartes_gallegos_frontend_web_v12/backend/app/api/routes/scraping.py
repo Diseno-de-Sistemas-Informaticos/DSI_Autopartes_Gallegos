@@ -169,19 +169,19 @@ def get_results(
         conditions.append("pr.nombre LIKE :provider")
         parameters["provider"] = f"%{provider.strip()}%"
     if min_price is not None:
-        conditions.append("hp.precio >= :min_price")
+        conditions.append("c.precio >= :min_price")
         parameters["min_price"] = min_price
     if max_price is not None:
-        conditions.append("hp.precio <= :max_price")
+        conditions.append("c.precio <= :max_price")
         parameters["max_price"] = max_price
     if availability is not None:
-        conditions.append("hp.disponible = :availability")
+        conditions.append("c.disponible = :availability")
         parameters["availability"] = int(availability)
     if captured_from:
-        conditions.append("hp.fecha_captura >= :captured_from")
+        conditions.append("c.fecha_captura >= :captured_from")
         parameters["captured_from"] = captured_from
     if captured_to:
-        conditions.append("hp.fecha_captura <= :captured_to")
+        conditions.append("c.fecha_captura <= :captured_to")
         parameters["captured_to"] = captured_to
 
     where = " AND ".join(conditions)
