@@ -16,3 +16,6 @@ Incluye:
 - Índices de consulta para historial y ejecuciones.
 - Contadores de la ejecución general y manual.
 - Relaciones adicionales entre historial y ejecución.
+
+Ejecute una vez y vuelva a ejecutarla si es necesario; contiene comprobaciones
+idempotentes y no elimina registros históricos.
