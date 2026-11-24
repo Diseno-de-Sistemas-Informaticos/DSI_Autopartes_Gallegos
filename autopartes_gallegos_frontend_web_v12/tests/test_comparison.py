@@ -1,5 +1,7 @@
 import unittest
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from backend.app.services.comparison_service import compare_capture
 

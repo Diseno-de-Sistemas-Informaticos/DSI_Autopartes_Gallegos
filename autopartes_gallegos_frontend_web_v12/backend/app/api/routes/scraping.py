@@ -115,6 +115,29 @@ def search_manual(
         _manual_lock.release()
 
 
+@router.post("/daily/run")
+def run_daily_manual(
+    db: Session = Depends(get_database_session),
+):
+    settings = get_settings()
+    if not settings.scraping.daily_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La extracción diaria está deshabilitada.",
+        )
+
+    try:
+        from app.services.daily_scraping_service import DailyScrapingService
+
+        result = DailyScrapingService(db, settings).run()
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
 @router.get("/results")
 def get_results(
     code: Optional[str] = None,
